@@ -71,10 +71,6 @@ unsigned char i;
 
 int8_t PAind = 13;
 
-//declarations for receive
-
-unsigned char RSSI;
-
 void blink(unsigned char Times)
 {
 	for (i = 0; i < Times; i++)
@@ -84,19 +80,6 @@ void blink(unsigned char Times)
 		digitalWrite(PinLED, 0);
 		delay(75);
 	}
-}
-
-void printRxFrame()
-{
-	Serial.print("Rx: ");
-	for (i = 0; i < rfm69._RxBufferLen; i++)
-	{
-		Serial.print(rfm69._RxBuffer[i], HEX);
-		//Serial.print(' ');
-	}
-	Serial.print("* ");
-	Serial.print(rfm69.convertRSSIToRSSIdBm(RSSI), 1);
-	Serial.println("dBm");
 }
 
 void checkcmd()
@@ -129,75 +112,17 @@ void setup()
 	//init device RFM69
 	if (!rfm69.initDevice(PinNSS, PinDIO0, CW, 868.95, GFSK, 100000, 40000, 5, PAind))
 		Serial.println("error initializing device");
-	rfm69.setCalibrationTemp(164);
-	//set sync words
-	unsigned char SyncBytes[] = {0x54, 0x3D}; // lets start relaxed
-	rfm69.setSyncWords(SyncBytes, sizeof(SyncBytes));
-	rfm69.useSyncWords(true);
-
-	rfm69.writeSPI(RFM69_REG_38_PAYLOADLENGTH, 0);	// unlimited
-	rfm69.writeSPI(RFM69_REG_37_PACKETCONFIG1, 0x00); // fixed length, noCRC, no address filter
-	rfm69.writeSPI(RFM69_REG_3C_FIFOTHRESH, MSGBLK1); //first mbus block
 }
 
 void loop()
 {
 	delay(10);
 
-	if (rfm69.rxMBusMsg())
+	//if (rfm69.rxMBusMsg())
+	if (rfm69.receiveSizedFrame(FixPktSize))
 	{
-		//if (rfm69.receiveSizedFrame(27)) {
-
-		RSSI = rfm69.getLastRSSI();
-
-		if (RSSI < 180)
-		{ // only our test msg
-			//printRxFrame();
-
-			rfm69.decode3o6Block(rfm69._RxBuffer, rfm69._mbusmsg, rfm69._RxBufferLen);
-			Serial.print("mbmsg: ");
-			for (i = 0; i < rfm69._mbusmsg[0] + 1; i++)
-			{
-				char tempstr[3];
-				sprintf(tempstr, "%02X", rfm69._mbusmsg[i]);
-				Serial.print(tempstr);
-			}
-			Serial.print(":");
-			Serial.print((rfm69._RxBufferLen * 2 / 3), HEX);
-
-			Serial.print(":");
-			Serial.print(rfm69.msgerr, HEX);
-			Serial.println();
-			
-			uint16_t mtype = get_type(rfm69._mbusmsg);
-
-			Serial.print("msgdec: ");
-			Serial.print(get_vendor(rfm69._mbusmsg), HEX);
-			Serial.print(";");
-			Serial.print(get_serial(rfm69._mbusmsg), HEX);
-			Serial.print(";");
-
-			if (mtype == 0x8069)
-			{
-				Serial.print(get_temp1(rfm69._mbusmsg));
-				Serial.print(";");
-				Serial.print(get_temp2(rfm69._mbusmsg));
-				Serial.print(";");
-				Serial.print(get_actHKZ(rfm69._mbusmsg));
-				Serial.print(";");
-				Serial.println(get_prevHKZ(rfm69._mbusmsg));
-			}
-			else if ((mtype & 0xFF00) == 0x4300)
-			{
-				Serial.print(get_last(rfm69._mbusmsg));
-				Serial.print(";");
-				Serial.println(get_current(rfm69._mbusmsg));
-			}
-			else
-			{
-				Serial.println();
-			};
-		}
+		printmsg(rfm69);
 	}
+
 	checkcmd();
 }
