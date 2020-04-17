@@ -1,6 +1,8 @@
 //just some encapsulations for value extracting
 //be careful: Byte ordering ntoh function include did not work
 
+#include "decoder3o6.h"
+
 static inline uint32_t get_serial(const uint8_t *const packet)
 {
     uint32_t serial;
@@ -61,59 +63,63 @@ static inline uint16_t get_prevHKZ(const uint8_t *const packet)
     return prevHKZ;
 }
 
-void printmsg(RFM69 rfm69)
+unsigned char mBusMsg[64];
+
+void printmsg(unsigned char RxBuffer[], unsigned char RxBufferlen, byte rx_rssi)
 {
-    //if (rfm69.receiveSizedFrame(27)) {
-
-    unsigned char RSSI = rfm69.getLastRSSI();
-
-    if (RSSI < 180)
-    { // only our test msg
-        //printRxFrame();
-
-        rfm69.decode3o6Block(rfm69._RxBuffer, rfm69._mbusmsg, rfm69._RxBufferLen);
-        Serial.print("mbmsg: ");
-        //for (i = 0; i < rfm69._mbusmsg[0] + 1; i++)
-        for (uint8_t i = 0; i < rfm69._RxBufferLen * 2 / 3; i++)
+    //unsigned char RSSI = rfm69.getLastRSSI();
+    {
+        memset(mBusMsg, 0, sizeof(mBusMsg));
+        if (decode3o6Block(RxBuffer, mBusMsg, RxBufferlen) != DecErr)
         {
-            char tempstr[3];
-            sprintf(tempstr, "%02X", rfm69._mbusmsg[i]);
-            Serial.print(tempstr);
-        }
-        Serial.print(":");
-        Serial.print((rfm69._RxBufferLen * 2 / 3), HEX);
+#ifdef debug_decoder
+            Serial.print("mbmsg: ");
+            //for (i = 0; i < mBusMsg[0] + 1; i++)
+            for (uint8_t i = 0; i < RxBufferlen * 2 / 3; i++)
+            {
+                char tempstr[3];
+                sprintf(tempstr, "%02X", mBusMsg[i]);
+                Serial.print(tempstr);
+            }
+            Serial.print(":");
+            Serial.print((RxBufferlen * 2 / 3), HEX);
 
-        Serial.print(":");
-        Serial.print(rfm69.msgerr, HEX);
-        Serial.println();
+            Serial.print(":");
+            Serial.println(rx_rssi / -2.0);
+#endif
+            uint16_t mtype = get_type(mBusMsg);
 
-        uint16_t mtype = get_type(rfm69._mbusmsg);
+            Serial.print("msgdec: ");
+            Serial.print(rx_rssi / -2.0);
+            Serial.print(":");
+            Serial.print(get_vendor(mBusMsg), HEX);
+            Serial.print(";");
+            Serial.print(get_serial(mBusMsg), HEX);
+            Serial.print(";");
+            Serial.print(mtype, HEX);
+            Serial.print(";");
 
-        Serial.print("msgdec: ");
-        Serial.print(get_vendor(rfm69._mbusmsg), HEX);
-        Serial.print(";");
-        Serial.print(get_serial(rfm69._mbusmsg), HEX);
-        Serial.print(";");
-
-        if (mtype == 0x8069)
-        {
-            Serial.print(get_temp1(rfm69._mbusmsg));
-            Serial.print(";");
-            Serial.print(get_temp2(rfm69._mbusmsg));
-            Serial.print(";");
-            Serial.print(get_actHKZ(rfm69._mbusmsg));
-            Serial.print(";");
-            Serial.println(get_prevHKZ(rfm69._mbusmsg));
-        }
-        else if ((mtype & 0xFF00) == 0x4300)
-        {
-            Serial.print(get_last(rfm69._mbusmsg));
-            Serial.print(";");
-            Serial.println(get_current(rfm69._mbusmsg));
-        }
-        else
-        {
-            Serial.println();
-        };
+            if (mtype == 0x8069)
+            {
+                Serial.print(get_temp1(mBusMsg));
+                Serial.print(";");
+                Serial.print(get_temp2(mBusMsg));
+                Serial.print(";");
+                Serial.print(get_actHKZ(mBusMsg));
+                Serial.print(";");
+                Serial.println(get_prevHKZ(mBusMsg));
+            }
+            else if ((mtype & 0xFF00) == 0x4300)
+            {
+                Serial.print(get_last(mBusMsg));
+                Serial.print(";");
+                Serial.println(get_current(mBusMsg));
+            }
+            else
+            {
+                Serial.println();
+            };
+        } // end if no errer
+        else Serial.print(rx_rssi/-2.0);
     }
 }

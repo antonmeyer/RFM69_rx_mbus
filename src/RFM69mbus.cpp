@@ -25,6 +25,7 @@ minor bugfixes
 
 #include "RFM69mbus.h"
 #include <SPI.h>
+#include "decoder3o6.h"
 
 boolean RFM69::initDevice(unsigned char PinNSS, unsigned char PinDIO0, rfm69type DeviceType, float Frequency, modulation Modulation, unsigned long BitRate, unsigned long fdev, int PreambleLength, int8_t TxPower)
 {
@@ -38,8 +39,9 @@ boolean RFM69::initDevice(unsigned char PinNSS, unsigned char PinDIO0, rfm69type
 	pinMode(_PinNSS, OUTPUT);
 	digitalWrite(_PinNSS, HIGH);
 	SPI.begin();
-	SPI.beginTransaction(SPISettings(16000000, MSBFIRST, SPI_MODE0));
+	//SPI.beginTransaction(SPISettings(16000000, MSBFIRST, SPI_MODE0));
 	//init digital i/o DIO0
+	//SPI.setFrequency(100000);
 	_PinDIO0 = PinDIO0;
 	pinMode(_PinDIO0, INPUT);
 	//set device type
@@ -60,8 +62,8 @@ boolean RFM69::initDevice(unsigned char PinNSS, unsigned char PinDIO0, rfm69type
 	//set DAGC continuous automatic gain control)
 	writeSPI(RFM69_REG_6F_TESTDAGC, RFM69_TESTDAGC_CONTINUOUSDAGC_IMPROVED_LOWBETAOFF);
 
-	//set LNA by AGC and 200 Ohm 0x8 / 0x00 50 Ohm
-	writeSPI(RFM69_REG_18_LNA, 0x00);
+	//set LNA by AGC and 200 Ohm 0x80 / 0x00 50 Ohm
+	writeSPI(RFM69_REG_18_LNA, 0x80);
 	//set DCC 4% and 333 kHz bandwidth
 	writeSPI(RFM69_REG_19_RXBW, 0xF0);  //010    10 000
 	writeSPI(RFM69_REG_1A_AFCBW, 0xF0); //was E0 changed to F0 = 333 kHz E8
@@ -70,101 +72,48 @@ boolean RFM69::initDevice(unsigned char PinNSS, unsigned char PinDIO0, rfm69type
 
 	//set frequency
 	setFrequency(Frequency);
-	//set modulation
-	setModulation(Modulation);
+	
 	//set bit rate
 	setBitRate(BitRate);
 	setFDEV(fdev);
 	//set packet mode in data mode
-	writeSPI(RFM69_REG_02_DATAMODUL, readSPI(RFM69_REG_02_DATAMODUL) & 0x9F);
-	//set packet mode variable length, whitening, CRC on, no address filtering
-	writeSPI(RFM69_REG_37_PACKETCONFIG1, 0x80); //was 0xD0
+	//writeSPI(RFM69_REG_02_DATAMODUL, readSPI(RFM69_REG_02_DATAMODUL) & 0x9F);
+	writeSPI(RFM69_REG_02_DATAMODUL, RFM69_DATAMODUL_DATAMODE_PACKET);
+	//set modulation
+	setModulation(Modulation);
 	//set PreambleLength
-	setPreambleLength(PreambleLength);
-	//set no sync word
-	SyncConfig = readSPI(RFM69_REG_2E_SYNCCONFIG);
-	writeSPI(RFM69_REG_2E_SYNCCONFIG, SyncConfig & 0x7F);
-	//set no encryption
-
+	
 	//set sync words
-	unsigned char SyncBytes[] = {0x54, 0x3D}; // lets start relaxed
+	unsigned char SyncBytes[] = {0x55, 0x54, 0x3D}; // lets start relaxed
 	setSyncWords(SyncBytes, sizeof(SyncBytes));
 	useSyncWords(true);
 
 	//rfm69.writeSPI(RFM69_REG_38_PAYLOADLENGTH, 0);	// unlimited
 	writeSPI(RFM69_REG_38_PAYLOADLENGTH, FixPktSize); //max FIFO lenght
 	writeSPI(RFM69_REG_37_PACKETCONFIG1, 0x00);		  // fixed length, noCRC, no address filter 0x4 to set interrupt without CRC???
-	//rfm69.writeSPI(RFM69_REG_3C_FIFOTHRESH, MSGBLK1); //first mbus block
-	writeSPI(RFM69_REG_3C_FIFOTHRESH, FixPktSize);
-
+	writeSPI(RFM69_REG_3C_FIFOTHRESH, FixPktSize); //first mbus block
+	
 	return (true);
 }
 
-boolean RFM69::waitForChannelFree(float RSSI_Threshold, unsigned long TimeoutFreeChannel)
-{
-	unsigned long WaitUntilTime;
-	//wait for a free channel, if CSMA/CA algorithm is enabled
-	//this takes around 1,4 ms to finish if channel is free
-	WaitUntilTime = millis() + TimeoutFreeChannel;
-	while (!checkIsChannelFree(RSSI_Threshold))
-	{
-		//channel not free
-		if ((long)(millis() - WaitUntilTime) > 0)
-			return (false);
-		delay(5);
-	}
-	return (true);
-}
 
-boolean RFM69::checkIsChannelFree(float RSSI_Threshold)
-{
-	unsigned long TimeoutTime;
-	float RSSI;
-	//restart RX
-	writeSPI(RFM69_REG_3D_PACKETCONFIG2, (readSPI(RFM69_REG_3D_PACKETCONFIG2) & 0xFB) | 0x20);
-	setModeRx();
-	//wait until RSSI sampling is done otherwise 0xFF (-127 dBm) is read
-	//RSSI sampling phase takes ~960 ?s after switch from standby to Rx
-	TimeoutTime = millis() + 5;
-	while ((readSPI(RFM69_REG_23_RSSICONFIG) & RFM69_RSSICONFIG_RSSIDONE) == 0)
-	{
-		if ((long)(millis() - TimeoutTime) > 0)
-			break;
-	}
-	RSSI = -(float)(readSPI(RFM69_REG_24_RSSIVALUE)) / 2.;
-	if (RSSI > RSSI_Threshold)
-		return (false);
-	else
-		return (true);
-}
-
-boolean RFM69::awaitSizedFrame(unsigned char Size, unsigned long Timeout)
-{
-	unsigned long TimeoutTime;
-	TimeoutTime = millis() + Timeout;
-	while ((long)(millis() - TimeoutTime) < 0)
-	{
-		if (receiveSizedFrame(Size))
-			return (true);
-	}
-	setModeStdby();
-	return (false);
-}
 
 boolean RFM69::receiveSizedFrame(unsigned char Size)
 {
 	setModeRx();
-	//if (readSPI(RFM69_REG_28_IRQFLAGS2) & RFM69_IRQFLAGS2_FIFOLEVEL) {
-	if (digitalRead(this->_PinDIO0))
-	{
+	if (readSPI(RFM69_REG_28_IRQFLAGS2) & RFM69_IRQFLAGS2_PAYLOADREADY) //RFM69_IRQFLAGS2_FIFOLEVEL) //
+	//if (digitalRead(this->_PinDIO0))
+	{	setModeStdby();
+
+		//Serial.println("PayloadReady");
 		//FIFO level was reached
 		_RSSILast = readSPI(RFM69_REG_24_RSSIVALUE);
 
-		readFifo(_RxBuffer, Size); // read the first block
+		readFifo(_RxBuffer, Size); 
 		//this->msgerr = decode3o6(_RxBuffer,_mbusmsg,0);
 		_RxBufferLen = Size;
 		//_RxBufferLen = ((_mbusmsg[0] + 0x0001)* 3) >> 1; //(L-field +1 ) *1.5 (3o6)
-		setModeStdby();
+		
 		return (true);
 	};
 
@@ -201,7 +150,7 @@ void RFM69::setBitRate(unsigned long BitRate)
 		BitRate = 300000;
 	if (_Modulation == OOK && BitRate > 19200)
 		BitRate = 19200;
-	RateVal = (unsigned int)(round(Fosc / BitRate));
+	RateVal = (uint16_t)(round(Fosc / BitRate));
 	writeSPI(RFM69_REG_03_BITRATEMSB, highByte(RateVal));
 	writeSPI(RFM69_REG_04_BITRATELSB, lowByte(RateVal));
 }
@@ -286,7 +235,7 @@ int RFM69::readTemperature()
 	Temp = _CalibrationTempVal - readSPI(RFM69_REG_4F_TEMP2);
 	switch (LastMode)
 	{
-	case RX:
+	case rfm69RX:
 		setModeRx();
 		break;
 	}
@@ -332,7 +281,7 @@ void RFM69::setModeStdby()
 
 void RFM69::setModeRx()
 {
-	if (_Mode != RX)
+	if (_Mode != rfm69RX)
 	{
 		if (_HighPowerDevice)
 		{
@@ -341,14 +290,14 @@ void RFM69::setModeRx()
 				setOverCurrentProtection(true);
 			}
 		}
-
-		memcpy(_RxBuffer, 0, sizeof(_RxBuffer));
-		memcpy(_mbusmsg, 0, sizeof(_mbusmsg));
-		writeSPI(RFM69_REG_3C_FIFOTHRESH, MSGBLK1);
+		
+		memset(_RxBuffer, 0, sizeof(_RxBuffer));
 		writeSPI(RFM69_REG_25_DIOMAPPING1, RFM69_DIOMAPPING1_DIO0MAPPING_01); // Set interrupt line 0 PayloadReady
 		setOpMode(RFM69_OPMODE_MODE_RX);									  // Clears FIFO
-		_Mode = RX;
+		_Mode = rfm69RX;
+		
 	}
+	
 }
 
 void RFM69::setOpMode(unsigned char Mode)
@@ -424,121 +373,7 @@ void RFM69::printRegister(unsigned char Reg)
 	Serial.println(readSPI(Reg), HEX);
 }
 
-#define DECODING_3OUTOF6_OK 0
-#define DECODING_3OUTOF6_ERROR 1
 
-unsigned char RFM69::decode3o6(unsigned char *encodedData, unsigned char *decodedData, unsigned char lastByte)
-{
-	unsigned char data[4];
-
-	// - Perform decoding on the input data -
-	if (!lastByte)
-	{
-		data[0] = decodeTab[(*(encodedData + 2) & 0x3F)];
-		data[1] = decodeTab[((*(encodedData + 2) & 0xC0) >> 6) | ((*(encodedData + 1) & 0x0F) << 2)];
-	}
-	// If last byte, ignore postamble sequence
-	else
-	{
-		data[0] = 0x00;
-		data[1] = 0x00;
-	}
-
-	data[2] = decodeTab[((*(encodedData + 1) & 0xF0) >> 4) | ((*encodedData & 0x03) << 4)];
-	data[3] = decodeTab[((*encodedData & 0xFC) >> 2)];
-
-	// - Check for invalid data coding -
-	if ((data[0] == 0xFF) | (data[1] == 0xFF) |
-		(data[2] == 0xFF) | (data[3] == 0xFF))
-
-		return (DecErr);
-	// - Shift the encoded values into a unsigned char buffer -
-	*decodedData = (data[3] << 4) | (data[2]);
-	if (!lastByte)
-		*(decodedData + 1) = (data[1] << 4) | (data[0]);
-
-	return (0); // no error
-}
-
-unsigned char RFM69::decode3o6Block(unsigned char *encoded, unsigned char *decoded, unsigned char encodedSize)
-{
-
-	unsigned char bytesRemaining;
-	unsigned char bytesEncoded;
-	unsigned char decodingStatus;
-
-	bytesRemaining = encodedSize;
-	bytesEncoded = 0;
-
-	while (bytesRemaining)
-	{
-
-		// If last byte
-		if (bytesRemaining == 1)
-		{
-			decodingStatus = decode3o6(encoded, decoded, 1);
-			if (decodingStatus == DecErr)
-				return (DecErr);
-			bytesRemaining -= 1;
-			bytesEncoded += 1;
-		}
-		else
-		{
-			decodingStatus = decode3o6(encoded, decoded, 0);
-			bytesRemaining -= 2;
-			bytesEncoded += 2;
-
-			encoded += 3;
-			decoded += 2;
-		}
-	}
-	return decodingStatus;
-}
-
-//----------------------------------------------------------------------------
-// void encode3outof6 (uint8 *uncodedData, uint8 *encodedData, uint8 lastByte)
-//
-//  DESCRIPTION:
-//    Performs the "3 out 6" encoding on a 16-bit data value into a
-//    24-bit data value. When encoding on a 8 bit variable, a postamle
-//    sequence is added.
-//
-//  ARGUMENTS:
-//        uint8 *uncodedData      - Pointer to data
-//        uint8 *encodedData      - Pointer to store the encoded data
-//        uint8 lastByte          - Only one byte left in data buffer
-//----------------------------------------------------------------------------
-
-void encode3outof6(uint8_t *uncodedData, uint8_t *encodedData, uint8_t lastByte)
-{
-
-	uint8_t data[4];
-
-	// - Perform encoding -
-
-	// If last byte insert postamble sequence
-	if (lastByte)
-	{
-		data[1] = 0x14;
-	}
-	else
-	{
-		data[0] = encodeTab[*(uncodedData + 1) & 0x0F];
-		data[1] = encodeTab[(*(uncodedData + 1) >> 4) & 0x0F];
-	}
-
-	data[2] = encodeTab[(*uncodedData) & 0x0F];
-	data[3] = encodeTab[((*uncodedData) >> 4) & 0x0F];
-
-	// - Shift the encoded 6-bit values into a byte buffer -
-	*(encodedData + 0) = (data[3] << 2) | (data[2] >> 4);
-	*(encodedData + 1) = (data[2] << 4) | (data[1] >> 2);
-
-	if (!lastByte)
-	{
-		*(encodedData + 2) = (data[1] << 6) | data[0];
-	}
-}
 
 unsigned char RFM69::rxMBusMsg()
 {
@@ -618,6 +453,7 @@ unsigned char RFM69::rxMBusMsg()
 	}
 	return (false);
 }
+
 
 uint16_t RFM69::crcCalc(uint16_t crcReg, uint8_t crcData)
 {

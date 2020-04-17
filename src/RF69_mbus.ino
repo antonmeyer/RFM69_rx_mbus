@@ -84,22 +84,35 @@ void blink(unsigned char Times)
 
 void checkcmd()
 {
-	String cmdstr;
-	unsigned char reg, regval;
-	char *ptr;
-	if (Serial.available() > 0)
-	{
-		cmdstr = Serial.readStringUntil("\n");
-		//we assume register, value = 5 byte
-		reg = strtoul(cmdstr.c_str(), &ptr, 16);
-		regval = strtoul(cmdstr.substring(3).c_str(), &ptr, 16);
+	 String cmdstr;
+  unsigned char reg, regval;
+  char cmd;
+  char *ptr;
+  if (Serial.available() > 0)
+  {
+    cmdstr = Serial.readStringUntil('\n');
+    //we assume "register, value" = 5 byte
+    cmd = cmdstr.charAt(0);
+    reg = strtoul(cmdstr.substring(1, 3).c_str(), &ptr, 16);
 
-		rfm69.writeSPI(reg, regval);
-		Serial.print("set ");
-		Serial.print(reg, HEX);
-		Serial.print(" to ");
-		Serial.println(regval, HEX);
-	}
+    if (cmd == 'w')
+    {
+      rfm69.setModeStdby();
+      regval = strtoul(cmdstr.substring(4, 6).c_str(), &ptr, 16);
+      rfm69.writeSPI(reg, regval);
+      Serial.print("set ");
+      Serial.print(reg, HEX);
+      Serial.print(" to ");
+    }
+    if (cmd == 'r')
+    {
+      regval = rfm69.readSPI(reg);
+      Serial.print(reg, HEX);
+      Serial.print(" is: ");
+    }
+
+    Serial.println(regval, HEX);
+  }
 }
 
 void setup()
@@ -112,6 +125,8 @@ void setup()
 	//init device RFM69
 	if (!rfm69.initDevice(PinNSS, PinDIO0, CW, 868.95, GFSK, 100000, 40000, 5, PAind))
 		Serial.println("error initializing device");
+	
+	Serial.println("ready");
 }
 
 void loop()
@@ -121,7 +136,7 @@ void loop()
 	//if (rfm69.rxMBusMsg())
 	if (rfm69.receiveSizedFrame(FixPktSize))
 	{
-		printmsg(rfm69);
+		printmsg(rfm69._RxBuffer, rfm69._RxBufferLen, rfm69.getLastRSSI());
 	}
 
 	checkcmd();
